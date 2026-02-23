@@ -1,0 +1,90 @@
+initscript {
+    repositories {
+        maven {
+            url '{{URL}}/artifactory/libs-release'
+            if (it.hasProperty("allowInsecureProtocol")) {
+                allowInsecureProtocol = true
+            }
+        }
+        maven {
+            url 'https://plugins.gradle.org/m2/'
+        }
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'org.jfrog.buildinfo:build-info-extractor-gradle:5.2.5'
+    }
+}
+
+// Configure plugin repositories globally - this runs before settings are evaluated
+gradle.beforeSettings { settings ->
+    settings.pluginManagement {
+        repositories {
+            maven {
+                url '{{URL}}/artifactory/libs-release'
+                if (it.hasProperty("allowInsecureProtocol")) {
+                    allowInsecureProtocol = true
+                }
+            }
+            gradlePluginPortal()
+            google()
+            mavenCentral()
+        }
+    }
+    
+    // Also configure dependency resolution strategy for settings dependencies
+    settings.dependencyResolutionManagement {
+        repositories {
+            maven {
+                url '{{URL}}/artifactory/libs-release'
+                if (it.hasProperty("allowInsecureProtocol")) {
+                    allowInsecureProtocol = true
+                }
+            }
+            google()
+            mavenCentral()
+        }
+    }
+}
+
+allprojects {
+    buildscript {
+        repositories {
+            maven {
+                url '{{URL}}/artifactory/libs-release'
+                if (it.hasProperty("allowInsecureProtocol")) {
+                    allowInsecureProtocol = true
+                }
+            }
+            google()
+            mavenCentral()
+            gradlePluginPortal()
+        }
+    }
+    repositories {
+        maven {
+            url '{{URL}}/artifactory/libs-release'
+            if (it.hasProperty("allowInsecureProtocol")) {
+                allowInsecureProtocol = true
+            }
+        }
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: RemoveJcenterPlugin
+
+class RemoveJcenterPlugin implements Plugin<Gradle> {
+    void apply(Gradle gradle) {
+        gradle.allprojects { project ->
+            project.repositories {
+                all { ArtifactRepository repo ->
+                    if (repo.hasProperty('url') && repo.url.host == 'jcenter.bintray.com') {
+                        remove repo
+                    }
+                }
+            }
+        }
+    }
+}

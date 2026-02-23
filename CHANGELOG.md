@@ -8,20 +8,37 @@ This is the log of notable changes to EAS CLI and related packages.
 
 ### 🎉 New features
 
+### 🐛 Bug fixes
+
+### 🧹 Chores
+
+## [16.32.0](https://github.com/expo/eas-cli/releases/tag/v16.32.0) - 2026-01-30
+
+### 🎉 New features
+
+- Hidden beta version of new `eas account:usage` command for viewing account usage and billing estimates. ([#3334](https://github.com/expo/eas-cli/pull/3334) by [@douglowder](https://github.com/douglowder), [@EvanBacon](https://github.com/EvanBacon))
+- Add `--no-bytecode` and `--source-maps [mode]` flags to `eas update`. ([#3339](https://github.com/expo/eas-cli/pull/3339) by [@brentvatne](https://github.com/brentvatne))
+- Add App Clip bundle identifier registration support for multi-target iOS builds. ([#3300](https://github.com/expo/eas-cli/pull/3300) by [@evanbacon](https://github.com/evanbacon))
 - Add `--runtime-version` and `--platform` filters to `eas update:list`. ([#3261](https://github.com/expo/eas-cli/pull/3261) by [@HarelSultan](https://github.com/HarelSultan))
 - Add `--local` and `--fastlane-args` to `eas submit`. ([#3279](https://github.com/expo/eas-cli/pull/3279) by [@linrongda](https://github.com/linrongda))
 
 ### 🐛 Bug fixes
 
+- Fix `--source-maps` flag compatibility with older SDKs that only support it as a boolean flag. ([#3341](https://github.com/expo/eas-cli/pull/3341) by [@brentvatne](https://github.com/brentvatne))
+- Use `--dump-sourcemaps` as fallback when `--source-maps` is not provided to `eas update`, for backwards compatibility. ([8cc324e1](https://github.com/expo/eas-cli/commit/8cc324e1) by [@brentvatne](https://github.com/brentvatne))
+- Fix `metadata:pull` failing for apps with only a live version by falling back to live app version and info. ([#3299](https://github.com/expo/eas-cli/pull/3299) by [@EvanBacon](https://github.com/EvanBacon))
 - eas init should fix and validate project name and slug. ([#3277](https://github.com/expo/eas-cli/pull/3277) by [@douglowder](https://github.com/douglowder))
 
 ### 🧹 Chores
 
 - Test with node 24. ([#3270](https://github.com/expo/eas-cli/pull/3270) by [@wschurman](https://github.com/wschurman))
+- Delete channel in background. ([#3278](https://github.com/expo/eas-cli/pull/3278) by [@quinlanj](https://github.com/quinlanj))
+- Add warning to channel:delete. ([#3335](https://github.com/expo/eas-cli/pull/3335) by [@quinlanj](https://github.com/quinlanj))
 
 ## [16.28.0](https://github.com/expo/eas-cli/releases/tag/v16.28.0) - 2025-11-20
 
 ### 🎉 New features
+
 - `eas:new` sorts organization accounts first in account selection. ([#3256](https://github.com/expo/eas-cli/pull/3256) by [@mackenco](https://github.com/mackenco))
 
 ### 🐛 Bug fixes

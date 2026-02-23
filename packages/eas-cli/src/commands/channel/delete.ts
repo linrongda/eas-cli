@@ -1,19 +1,12 @@
-import gql from 'graphql-tag';
-
+import { scheduleChannelDeletionAsync } from '../../channel/delete';
 import { selectChannelOnAppAsync } from '../../channel/queries';
 import EasCommand from '../../commandUtils/EasCommand';
-import { ExpoGraphqlClient } from '../../commandUtils/context/contextUtils/createGraphqlClient';
 import { EasNonInteractiveAndJsonFlags } from '../../commandUtils/flags';
-import { withErrorHandlingAsync } from '../../graphql/client';
-import {
-  DeleteUpdateChannelMutation,
-  DeleteUpdateChannelMutationVariables,
-  DeleteUpdateChannelResult,
-} from '../../graphql/generated';
 import { ChannelQuery } from '../../graphql/queries/ChannelQuery';
 import Log from '../../log';
 import { toggleConfirmAsync } from '../../prompts';
 import { enableJsonOutput, printJsonOnlyOutput } from '../../utils/json';
+import { pollForBackgroundJobReceiptAsync } from '../../utils/pollForBackgroundJobReceiptAsync';
 
 export default class ChannelDelete extends EasCommand {
   static override description = 'Delete a channel';
@@ -77,7 +70,7 @@ export default class ChannelDelete extends EasCommand {
     if (!nonInteractive) {
       Log.addNewLineIfNone();
       Log.warn(
-        `You are about to permanently delete channel: "${channelName}".\nThis action is irreversible.`
+        `You are about to permanently delete channel: "${channelName}". Deleting this channel will also permanently remove all associated builds from your account. \nThis action is irreversible.`
       );
       Log.newLine();
       const confirmed = await toggleConfirmAsync({ message: 'Are you sure you wish to proceed?' });
@@ -87,39 +80,14 @@ export default class ChannelDelete extends EasCommand {
       }
     }
 
-    const deletionResult = await deleteChannelOnAppAsync(graphqlClient, {
-      channelId,
-    });
+    const receipt = await scheduleChannelDeletionAsync(graphqlClient, { channelId });
+    const successfulReceipt = await pollForBackgroundJobReceiptAsync(graphqlClient, receipt);
+    Log.debug('Deletion result', { successfulReceipt });
 
     if (jsonFlag) {
-      printJsonOnlyOutput(deletionResult);
+      printJsonOnlyOutput({ id: channelId });
     } else {
       Log.withTick(`️Deleted channel "${channelName}".`);
     }
   }
-}
-
-async function deleteChannelOnAppAsync(
-  graphqlClient: ExpoGraphqlClient,
-  { channelId }: DeleteUpdateChannelMutationVariables
-): Promise<DeleteUpdateChannelResult> {
-  const data = await withErrorHandlingAsync(
-    graphqlClient
-      .mutation<DeleteUpdateChannelMutation, DeleteUpdateChannelMutationVariables>(
-        gql`
-          mutation DeleteUpdateChannel($channelId: ID!) {
-            updateChannel {
-              deleteUpdateChannel(channelId: $channelId) {
-                id
-              }
-            }
-          }
-        `,
-        {
-          channelId,
-        }
-      )
-      .toPromise()
-  );
-  return data.updateChannel.deleteUpdateChannel;
 }

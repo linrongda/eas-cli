@@ -4,7 +4,6 @@ import { Errors, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import nullthrows from 'nullthrows';
 
-// import { getExpoWebsiteBaseUrl } from '../../api';
 import { ensureBranchExistsAsync } from '../../branch/queries';
 import { ensureRepoIsCleanAsync } from '../../build/utils/repository';
 import { getUpdateGroupUrl } from '../../build/utils/url';
@@ -22,7 +21,6 @@ import {
   UpdateRolloutInfoGroup,
 } from '../../graphql/generated';
 import { PublishMutation } from '../../graphql/mutations/PublishMutation';
-// import { AppQuery } from '../../graphql/queries/AppQuery';
 import Log, { learnMore, link } from '../../log';
 import { ora } from '../../ora';
 import { RequestedPlatform } from '../../platform';
@@ -35,7 +33,6 @@ import {
   buildUnsortedUpdateInfoGroupAsync,
   collectAssetsAsync,
   filterCollectedAssetsByRequestedPlatforms,
-  // findCompatibleBuildsAsync,
   generateEasMetadataAsync,
   getBranchNameForCommandAsync,
   getRuntimeToPlatformsAndFingerprintInfoMappingFromRuntimeVersionInfoObjects,
@@ -68,6 +65,28 @@ import formatFields from '../../utils/formatFields';
 import { enableJsonOutput, printJsonOnlyOutput } from '../../utils/json';
 import { maybeWarnAboutEasOutagesAsync } from '../../utils/statuspageService';
 
+/**
+ * Preprocess argv to handle --source-maps with optional value.
+ * If --source-maps is followed by another flag (starts with -) or end of args,
+ * insert 'true' as the default value.
+ */
+export function preprocessSourceMapsArg(argv: string[]): string[] {
+  const result: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    result.push(arg);
+
+    if (arg === '--source-maps') {
+      const nextArg = argv[i + 1];
+      // If no next arg or next arg is a flag, insert 'true' as the value
+      if (nextArg === undefined || nextArg.startsWith('-')) {
+        result.push('true');
+      }
+    }
+  }
+  return result;
+}
+
 type RawUpdateFlags = {
   auto: boolean;
   branch?: string;
@@ -77,6 +96,8 @@ type RawUpdateFlags = {
   'input-dir': string;
   'skip-bundler': boolean;
   'clear-cache': boolean;
+  'no-bytecode': boolean;
+  'source-maps'?: string;
   'private-key-path'?: string;
   'emit-metadata': boolean;
   'rollout-percentage'?: number;
@@ -94,6 +115,8 @@ type UpdateFlags = {
   inputDir: string;
   skipBundler: boolean;
   clearCache: boolean;
+  noBytecode: boolean;
+  sourceMaps?: string;
   privateKeyPath?: string;
   emitMetadata: boolean;
   rolloutPercentage?: number;
@@ -132,6 +155,16 @@ export default class UpdatePublish extends EasCommand {
       description: `Clear the bundler cache before publishing`,
       default: false,
     }),
+    'no-bytecode': Flags.boolean({
+      description: `Skip generating Hermes bytecode (output plain JavaScript instead)`,
+      default: false,
+      hidden: true,
+    }),
+    'source-maps': Flags.string({
+      description: `Emit source maps. Options: true (default), inline, false`,
+      default: 'true',
+      hidden: true,
+    }),
     'emit-metadata': Flags.boolean({
       description: `Emit "eas-update-metadata.json" in the bundle folder with detailed information about the generated updates`,
       default: false,
@@ -169,7 +202,9 @@ export default class UpdatePublish extends EasCommand {
   };
 
   async runAsync(): Promise<void> {
-    const { flags: rawFlags } = await this.parse(UpdatePublish);
+    // Preprocess argv to handle --source-maps with optional value
+    const preprocessedArgv = preprocessSourceMapsArg(this.argv);
+    const { flags: rawFlags } = await this.parse(UpdatePublish, preprocessedArgv);
     const paginatedQueryOptions = getPaginatedQueryOptions(rawFlags);
     const {
       auto: autoFlag,
@@ -179,6 +214,8 @@ export default class UpdatePublish extends EasCommand {
       inputDir,
       skipBundler,
       clearCache,
+      noBytecode,
+      sourceMaps,
       privateKeyPath,
       json: jsonFlag,
       nonInteractive,
@@ -264,6 +301,8 @@ export default class UpdatePublish extends EasCommand {
           exp,
           platformFlag: requestedPlatform,
           clearCache,
+          noBytecode,
+          sourceMaps,
           extraEnv: maybeServerEnv,
         });
         bundleSpinner.succeed('Exported bundle(s)');
@@ -597,12 +636,6 @@ export default class UpdatePublish extends EasCommand {
 
     Log.addNewLineIfNone();
 
-    // const runtimeToCompatibleBuilds = await Promise.all(
-    //   runtimeToPlatformsAndFingerprintInfoAndFingerprintSourceMapping.map(obj =>
-    //     findCompatibleBuildsAsync(graphqlClient, projectId, obj)
-    //   )
-    // );
-
     for (const runtime of uniqBy(
       runtimeToPlatformsAndFingerprintInfoMapping,
       version => version.runtimeVersion
@@ -674,57 +707,8 @@ export default class UpdatePublish extends EasCommand {
         );
         Log.addNewLineIfNone();
       }
-
-      // NOTE(brentvatne): temporarily disable logging this until we can revisit the formatting
-      // and the logic for it - it's a bit too aggressive right now, and warns even if you're
-      // not using EAS Build
-      //
-      // const fingerprintsWithoutCompatibleBuilds = runtimeToCompatibleBuilds.find(
-      //   ({ runtimeVersion }) => runtimeVersion === runtime.runtimeVersion
-      // )?.fingerprintInfoGroupWithCompatibleBuilds;
-      // if (fingerprintsWithoutCompatibleBuilds) {
-      //   const missingBuilds = Object.entries(fingerprintsWithoutCompatibleBuilds).filter(
-      //     ([_platform, fingerprintInfo]) => !fingerprintInfo.build
-      //   );
-      //   if (missingBuilds.length > 0) {
-      //     const project = await AppQuery.byIdAsync(graphqlClient, projectId);
-      //     Log.warn('No compatible builds found for the following fingerprints:');
-      //     for (const [platform, fingerprintInfo] of missingBuilds) {
-      //       const fingerprintUrl = new URL(
-      //         `/accounts/${project.ownerAccount.name}/projects/${project.slug}/fingerprints/${fingerprintInfo.fingerprintHash}`,
-      //         getExpoWebsiteBaseUrl()
-      //       );
-      //       Log.warn(
-      //         formatFields(
-      //           [
-      //             {
-      //               label: `${this.prettyPlatform(platform)} fingerprint`,
-      //               value: fingerprintInfo.fingerprintHash,
-      //             },
-      //             { label: 'URL', value: fingerprintUrl.toString() },
-      //           ],
-      //           {
-      //             labelFormat: label => `    ${chalk.dim(label)}:`,
-      //           }
-      //         )
-      //       );
-      //       Log.addNewLineIfNone();
-      //     }
-      //   }
-      // }
     }
   }
-
-  // private prettyPlatform(updatePlatform: string): string {
-  //   switch (updatePlatform) {
-  //     case 'android':
-  //       return 'Android';
-  //     case 'ios':
-  //       return 'iOS';
-  //     default:
-  //       return updatePlatform;
-  //   }
-  // }
 
   private sanitizeFlags(flags: RawUpdateFlags): UpdateFlags {
     const nonInteractive = flags['non-interactive'] ?? false;
@@ -755,6 +739,8 @@ export default class UpdatePublish extends EasCommand {
       inputDir: flags['input-dir'],
       skipBundler,
       clearCache: flags['clear-cache'] ? true : !!flags['environment'],
+      noBytecode: flags['no-bytecode'] ?? false,
+      sourceMaps: flags['source-maps'],
       platform: flags.platform,
       privateKeyPath: flags['private-key-path'],
       rolloutPercentage: flags['rollout-percentage'],
