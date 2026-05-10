@@ -22,6 +22,7 @@ import { createBuildContextAsync } from './createContext';
 import { evaluateConfigWithEnvVarsAsync } from './evaluateConfigWithEnvVarsAsync';
 import { prepareIosBuildAsync } from './ios/build';
 import { LocalBuildMode, LocalBuildOptions } from './local';
+import { ensureLockfileExistsAsync } from './validateLockfile';
 import { ensureExpoDevClientInstalledForDevClientBuildsAsync } from './utils/devClient';
 import { printBuildResults, printLogsUrls } from './utils/printBuildInfo';
 import { ensureRepoIsCleanAsync } from './utils/repository';
@@ -49,6 +50,7 @@ import {
   CustomBuildConfigMetadata,
   validateCustomBuildConfigAsync,
 } from '../project/customBuildConfig';
+import { discourageExpoGoForProdAsync } from '../project/discourageExpoGoForProdAsync';
 import { checkExpoSdkIsSupportedAsync } from '../project/expoSdk';
 import { validateMetroConfigForManagedWorkflowAsync } from '../project/metroConfig';
 import {
@@ -64,6 +66,7 @@ import {
 } from '../project/remoteVersionSource';
 import { confirmAsync } from '../prompts';
 import { getEasBuildRunCachedAppPath, runAsync } from '../run/run';
+import { SimulatorRunTarget } from '../run/ios/run';
 import { isRunnableOnSimulatorOrEmulator } from '../run/utils';
 import { createSubmissionContextAsync } from '../submit/context';
 import {
@@ -83,6 +86,7 @@ import { Client } from '../vcs/vcs';
 
 let metroConfigValidated = false;
 let sdkVersionChecked = false;
+let lockfileChecked = false;
 let hasWarnedAboutUsageOverages = false;
 
 export interface BuildFlags {
@@ -101,6 +105,7 @@ export interface BuildFlags {
   freezeCredentials: boolean;
   isVerboseLoggingEnabled?: boolean;
   whatToTest?: string;
+  simulator?: SimulatorRunTarget;
 }
 
 export async function runBuildAndSubmitAsync({
@@ -147,6 +152,8 @@ export async function runBuildAndSubmitAsync({
     profileName: flags.profile ?? undefined,
     projectDir,
   });
+
+  await discourageExpoGoForProdAsync(buildProfiles, projectDir, vcsClient);
 
   for (const buildProfile of buildProfiles) {
     if (buildProfile.profile.image && ['default', 'stable'].includes(buildProfile.profile.image)) {
@@ -411,6 +418,13 @@ async function prepareAndStartBuildAsync({
     env,
   });
 
+  if (!lockfileChecked && !flags.localBuildOptions.localBuildMode) {
+    if (!process.env.EAS_BUILD_SKIP_LOCKFILE_CHECK) {
+      await ensureLockfileExistsAsync(projectDir);
+    }
+    lockfileChecked = true;
+  }
+
   if (!hasWarnedAboutUsageOverages && !flags.localBuildOptions.localBuildMode) {
     hasWarnedAboutUsageOverages = true;
     Log.newLine();
@@ -576,14 +590,17 @@ function exitWithNonZeroCodeIfSomeBuildsFailed(maybeBuilds: (BuildFragment | nul
   }
 }
 
-export async function downloadAndRunAsync(build: BuildFragment): Promise<void> {
+export async function downloadAndRunAsync(
+  build: BuildFragment,
+  simulator?: SimulatorRunTarget
+): Promise<void> {
   assert(build.artifacts?.applicationArchiveUrl);
   const cachedAppPath = getEasBuildRunCachedAppPath(build.project.id, build.id, build.platform);
 
   if (await pathExists(cachedAppPath)) {
     Log.newLine();
     Log.log(`Using cached app...`);
-    await runAsync(cachedAppPath, build.platform);
+    await runAsync(cachedAppPath, build.platform, simulator);
     return;
   }
 
@@ -592,7 +609,7 @@ export async function downloadAndRunAsync(build: BuildFragment): Promise<void> {
     build.platform,
     cachedAppPath
   );
-  await runAsync(buildPath, build.platform);
+  await runAsync(buildPath, build.platform, simulator);
 }
 
 async function maybeDownloadAndRunSimulatorBuildsAsync(
@@ -614,9 +631,9 @@ async function maybeDownloadAndRunSimulatorBuildsAsync(
             } build on ${
               simBuild.platform === AppPlatform.Android ? 'an emulator' : 'a simulator'
             }?`,
-          }));
+        }));
         if (confirm) {
-          await downloadAndRunAsync(simBuild);
+          await downloadAndRunAsync(simBuild, flags.simulator);
         }
       }
     }

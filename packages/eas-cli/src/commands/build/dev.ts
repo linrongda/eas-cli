@@ -12,6 +12,7 @@ import { evaluateConfigWithEnvVarsAsync } from '../../build/evaluateConfigWithEn
 import { downloadAndRunAsync, runBuildAndSubmitAsync } from '../../build/runBuildAndSubmit';
 import { ensureRepoIsCleanAsync } from '../../build/utils/repository';
 import EasCommand from '../../commandUtils/EasCommand';
+import { preprocessBuildCommandArgs } from '../../commandUtils/buildFlags';
 import { ExpoGraphqlClient } from '../../commandUtils/context/contextUtils/createGraphqlClient';
 import { createFingerprintAsync } from '../../fingerprint/cli';
 import { BuildFragment, BuildStatus, DistributionType } from '../../graphql/generated';
@@ -34,14 +35,27 @@ export default class BuildDev extends EasCommand {
     'run dev client simulator/emulator build with matching fingerprint or create a new one';
 
   static override flags = {
-    platform: Flags.enum<Platform.IOS | Platform.ANDROID>({
+    platform: Flags.option({
       char: 'p',
-      options: [Platform.IOS, Platform.ANDROID],
-    }),
+      options: [Platform.IOS, Platform.ANDROID] as const,
+    })(),
     profile: Flags.string({
       char: 'e',
       description: `Name of the build profile from eas.json. It must be a profile allowing to create emulator/simulator internal distribution dev client builds. The "${DEFAULT_EAS_BUILD_RUN_PROFILE_NAME}" build profile will be selected by default.`,
       helpValue: 'PROFILE_NAME',
+    }),
+    'skip-build-if-not-found': Flags.boolean({
+      description: 'Skip build if no successful build with matching fingerprint is found.',
+      default: false,
+    }),
+    'skip-bundler': Flags.boolean({
+      description: 'Install and run the development build without starting the bundler server.',
+      default: false,
+    }),
+    simulator: Flags.string({
+      description:
+        'iOS simulator name or UDID to install and run the development build on. If no value is provided, you will be prompted to select a simulator.',
+      multiple: false,
     }),
   };
 
@@ -55,7 +69,7 @@ export default class BuildDev extends EasCommand {
   };
 
   protected override async runAsync(): Promise<any> {
-    const { flags } = await this.parse(BuildDev);
+    const { flags } = await this.parse(BuildDev, preprocessBuildCommandArgs(this.argv));
 
     const {
       loggedIn: { actor, graphqlClient },
@@ -73,6 +87,10 @@ export default class BuildDev extends EasCommand {
     if (process.platform !== 'darwin' && platform === Platform.IOS) {
       Errors.error('Running iOS builds in simulator is only supported on macOS.', { exit: 1 });
     }
+    if (flags.simulator && platform !== Platform.IOS) {
+      Errors.error('The --simulator flag can only be used with --platform ios.', { exit: 1 });
+    }
+    const simulator = flags.simulator === '' ? true : flags.simulator;
 
     await vcsClient.ensureRepoExistsAsync();
     await ensureRepoIsCleanAsync(vcsClient, flags.nonInteractive);
@@ -124,12 +142,19 @@ export default class BuildDev extends EasCommand {
       );
 
       if (build.artifacts?.applicationArchiveUrl) {
-        await downloadAndRunAsync(build);
-        await this.startDevServerAsync({ projectDir, platform });
+        await downloadAndRunAsync(build, simulator);
+        if (!flags['skip-bundler']) {
+          await this.startDevServerAsync({ projectDir, platform });
+        }
         return;
       } else {
-        Log.warn('Artifacts for this build expired. New build will be started.');
+        Log.warn('Artifacts for this build expired.');
       }
+    }
+
+    if (flags['skip-build-if-not-found']) {
+      Log.log('No successful build with matching fingerprint found. Skipping build.');
+      return;
     }
 
     Log.log('🚀 No successful build with matching fingerprint found. Starting a new build...');
@@ -167,13 +192,16 @@ export default class BuildDev extends EasCommand {
         autoSubmit: false,
         localBuildOptions: {},
         profile: flags.profile ?? DEFAULT_EAS_BUILD_RUN_PROFILE_NAME,
+        simulator,
       },
       actor,
       getDynamicPrivateProjectConfigAsync,
       downloadSimBuildAutoConfirm: true,
       envOverride: env,
     });
-    await this.startDevServerAsync({ projectDir, platform });
+    if (!flags['skip-bundler']) {
+      await this.startDevServerAsync({ projectDir, platform });
+    }
   }
 
   private async selectPlatformAsync(platform?: Platform): Promise<Platform> {

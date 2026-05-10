@@ -1,18 +1,18 @@
-import { Flags } from '@oclif/core';
-import { OptionFlag } from '@oclif/core/lib/interfaces';
+import { Flags, Interfaces } from '@oclif/core';
 
-import { EasNonInteractiveAndJsonFlags } from './flags';
+import { EasNonInteractiveAndJsonFlags, resolveNonInteractiveAndJsonFlags } from './flags';
 
 export const getPaginatedQueryOptions = (
   flags: Partial<
     Record<keyof typeof EasPaginatedQueryFlags | keyof typeof EasNonInteractiveAndJsonFlags, any>
   >
 ): PaginatedQueryOptions => {
+  const { json, nonInteractive } = resolveNonInteractiveAndJsonFlags(flags);
   return {
     ...('limit' in flags && { limit: flags.limit }),
     offset: flags.offset ?? 0,
-    nonInteractive: flags['non-interactive'] ?? false,
-    json: flags.json ?? false,
+    nonInteractive,
+    json,
   };
 };
 
@@ -35,12 +35,16 @@ const parseFlagInputStringAsInteger = (
 export const getLimitFlagWithCustomValues = ({
   defaultTo,
   limit,
+  description,
 }: {
   defaultTo: number;
   limit: number;
-}): OptionFlag<number | undefined> =>
+  description?: string;
+}): Interfaces.OptionFlag<number | undefined> =>
   Flags.integer({
-    description: `The number of items to fetch each query. Defaults to ${defaultTo} and is capped at ${limit}.`,
+    description:
+      description ??
+      `The number of items to fetch each query. Defaults to ${defaultTo} and is capped at ${limit}.`,
     // eslint-disable-next-line async-protect/async-suffix
     parse: async input => parseFlagInputStringAsInteger(input, 'limit', 1, limit),
   });
