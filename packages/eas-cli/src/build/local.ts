@@ -38,13 +38,19 @@ export interface LocalBuildOptions {
   verbose?: boolean;
 }
 
+interface LocalBuildCommand {
+  command: string;
+  args: string[];
+  sensitiveArgs: string[];
+}
+
 export async function runLocalBuildAsync(
   job: Job,
   metadata: Metadata,
   options: LocalBuildOptions,
   env: Record<string, string>
 ): Promise<void> {
-  const { command, args } = await getCommandAndArgsAsync(job, metadata);
+  const { command, args, sensitiveArgs } = await getCommandAndArgsAsync(job, metadata);
   let spinner;
   if (!options.verbose) {
     spinner = ora().start(options.skipNativeBuild ? 'Preparing project' : 'Building project');
@@ -72,7 +78,7 @@ export async function runLocalBuildAsync(
     // log command execution to assist in debugging local builds
     Log.debug('Running local build, using local-build-plugin', {
       command,
-      args,
+      args: redactSensitiveArgs(args, sensitiveArgs),
       env: mergedEnv,
     });
     const spawnPromise = spawnAsync(command, args, {
@@ -80,7 +86,11 @@ export async function runLocalBuildAsync(
       env: mergedEnv,
     });
     childProcess = spawnPromise.child;
-    await spawnPromise;
+    try {
+      await spawnPromise;
+    } catch (err) {
+      throw redactSensitiveArgsFromError(err, sensitiveArgs);
+    }
   } finally {
     process.removeListener('SIGINT', interruptHandler);
     spinner?.stop();
@@ -90,12 +100,13 @@ export async function runLocalBuildAsync(
 async function getCommandAndArgsAsync(
   job: Job,
   metadata: Metadata
-): Promise<{ command: string; args: string[] }> {
+): Promise<LocalBuildCommand> {
   const jobAndMetadataBase64 = Buffer.from(JSON.stringify({ job, metadata })).toString('base64');
   if (process.env.EAS_LOCAL_BUILD_PLUGIN_PATH) {
     return {
       command: process.env.EAS_LOCAL_BUILD_PLUGIN_PATH,
       args: [jobAndMetadataBase64],
+      sensitiveArgs: [jobAndMetadataBase64],
     };
   } else {
     const args = [`${PLUGIN_PACKAGE_NAME}@${PLUGIN_PACKAGE_VERSION}`, jobAndMetadataBase64];
@@ -107,6 +118,7 @@ async function getCommandAndArgsAsync(
     return {
       command: 'npx',
       args,
+      sensitiveArgs: [jobAndMetadataBase64],
     };
   }
 }
@@ -114,4 +126,34 @@ async function getCommandAndArgsAsync(
 async function isAtLeastNpm7Async(): Promise<boolean> {
   const version = (await spawnAsync('npm', ['--version'])).stdout.trim();
   return semver.gte(version, '7.0.0');
+}
+
+function redactSensitiveArgs<T>(value: T, sensitiveArgs: string[]): T {
+  if (typeof value === 'string') {
+    return sensitiveArgs.reduce(
+      (result, sensitiveArg) => result.replaceAll(sensitiveArg, '<redacted>'),
+      value
+    ) as T;
+  } else if (Array.isArray(value)) {
+    return value.map(item => redactSensitiveArgs(item, sensitiveArgs)) as T;
+  }
+  return value;
+}
+
+function redactSensitiveArgsFromError(err: unknown, sensitiveArgs: string[]): unknown {
+  if (err instanceof Error) {
+    err.message = redactSensitiveArgs(err.message, sensitiveArgs);
+    err.stack = redactSensitiveArgs(err.stack, sensitiveArgs);
+  }
+  if (typeof err === 'object' && err !== null) {
+    const spawnError = err as {
+      output?: string[];
+      stdout?: string;
+      stderr?: string;
+    };
+    spawnError.output = redactSensitiveArgs(spawnError.output, sensitiveArgs);
+    spawnError.stdout = redactSensitiveArgs(spawnError.stdout, sensitiveArgs);
+    spawnError.stderr = redactSensitiveArgs(spawnError.stderr, sensitiveArgs);
+  }
+  return err;
 }
